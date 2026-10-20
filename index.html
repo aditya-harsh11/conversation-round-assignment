@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conversation Round Assignment</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px; background: #f3f4f6; color: #111827;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 { text-align: center; font-size: 24px; margin: 0 0 20px; }
+  section { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+  h2 { text-align: center; font-size: 18px; margin: 0 0 14px; }
+  h3 { text-align: center; font-size: 18px; margin: 22px 0 10px; }
+  .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 15px; min-width: 0; flex: 1; max-width: 280px; }
+  button { padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; font-size: 14px; cursor: pointer; }
+  button.primary { background: #1f2937; color: #fff; border-color: #1f2937; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .hint { color: #6b7280; font-size: 13px; margin: 10px 0; text-align: center; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
+  th, td { border: 1px solid #e5e7eb; padding: 8px 10px; text-align: center; }
+  th { background: #f3f4f6; }
+  .selected td { background: #ecfdf5; }
+  .x { border: none; background: none; color: #9ca3af; padding: 0 4px; font-size: 16px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .card { border-radius: 10px; padding: 14px 16px; color: #fff; }
+  .card h4 { text-align: center; margin: 0 0 8px; font-size: 17px; }
+  .card .who { font-size: 13px; opacity: 0.9; }
+  .card ol { margin: 4px 0 0; padding-left: 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Conversation Round Assignment</h1>
+
+  <section>
+    <h2>1. Check In</h2>
+    <form id="checkin-form" class="row">
+      <input id="name" placeholder="Name or ID" autocomplete="off">
+      <button class="primary" type="submit">Check in</button>
+    </form>
+    <div id="checkins"></div>
+  </section>
+
+  <section>
+    <h2>2. Pick the 6 Who Run This Session</h2>
+    <div class="row">
+      <button id="first6">Take first 6</button>
+      <button id="shuffle6">Shuffle (random 6)</button>
+    </div>
+    <p class="hint" id="pick-hint"></p>
+  </section>
+
+  <section>
+    <h2>3. Assign Colors &amp; Generate Schedule</h2>
+    <div class="row">
+      <button class="primary" id="generate">Generate</button>
+      <button id="csv">Download CSV</button>
+      <button id="reset">New Group (Reset Everything)</button>
+    </div>
+    <div id="output"></div>
+  </section>
+</main>
+
+<script src="schedule.js"></script>
+<script>
+const COLORS = [
+  { name: 'Purple', hex: '#7c3aed' }, { name: 'Blue', hex: '#2563eb' },
+  { name: 'Orange', hex: '#ea580c' }, { name: 'Red', hex: '#dc2626' },
+  { name: 'Black', hex: '#1f2937' }, { name: 'Green', hex: '#16a34a' },
+];
+
+let checkins = [];   // { name, time }
+let selected = [];   // names of the 6 picked
+let result = null;   // { people: [{ name, color }], rounds }
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+$('checkin-form').onsubmit = e => {
+  e.preventDefault();
+  const name = $('name').value.trim();
+  if (!name) return;
+  if (checkins.some(c => c.name.toLowerCase() === name.toLowerCase())) return alert(name + ' is already checked in.');
+  checkins.push({ name, time: new Date() });
+  $('name').value = '';
+  render();
+};
+
+$('first6').onclick = () => { selected = checkins.slice(0, 6).map(c => c.name); result = null; render(); };
+$('shuffle6').onclick = () => { selected = shuffle(checkins).slice(0, 6).map(c => c.name); result = null; render(); };
+
+$('generate').onclick = () => {
+  const colors = shuffle(COLORS);
+  const people = shuffle(selected).map((name, i) => ({ name, color: colors[i] }));
+  result = { people, rounds: buildSchedule() };
+  render();
+};
+
+$('reset').onclick = () => {
+  if (!confirm('Clear all check-ins and the schedule?')) return;
+  checkins = []; selected = []; result = null;
+  render();
+};
+
+$('csv').onclick = () => {
+  const rows = [['Check-ins'], ['Order', 'Name', 'Time', 'Selected']];
+  checkins.forEach((c, i) => rows.push([i + 1, c.name, c.time.toLocaleTimeString(), selected.includes(c.name) ? 'Yes' : 'No']));
+  if (result) {
+    rows.push([], ['Master Table'], ['Participant', 'Color', 'Round 1', 'Round 2', 'Round 3', 'Round 4', 'Round 5']);
+    result.people.forEach((p, i) => rows.push([p.name, p.color.name, ...cellsFor(i)]));
+    rows.push([], ['Partner Cards'], ['Color', 'Participant', 'Round', 'Partner', 'Room', 'Seat']);
+    result.people.forEach((p, i) => partnersFor(i).forEach((x, r) =>
+      rows.push([p.color.name, p.name, r + 1, result.people[x.partner].color.name, x.room, x.seat])));
+  }
+  const csv = rows.map(r => r.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'session-' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+};
+
+// For person i: their partner, room and seat in each round.
+function partnersFor(i) {
+  return result.rounds.map(round => {
+    const m = round.find(m => m.left === i || m.right === i);
+    return m.left === i
+      ? { partner: m.right, room: m.room, seat: 'Left' }
+      : { partner: m.left, room: m.room, seat: 'Right' };
+  });
+}
+
+function cellsFor(i) {
+  return partnersFor(i).map(x => x.room + '-' + x.seat[0]);
+}
+
+function render() {
+  $('checkins').innerHTML = !checkins.length ? '<p class="hint">No one checked in yet.</p>' :
+    '<p class="hint">' + checkins.length + ' checked in</p><div class="table-wrap"><table><tr><th>#</th><th>Name</th><th>Time</th><th></th></tr>' +
+    checkins.map((c, i) => `<tr class="${selected.includes(c.name) ? 'selected' : ''}"><td>${i + 1}</td><td>${esc(c.name)}</td>` +
+      `<td>${c.time.toLocaleTimeString()}</td><td><button class="x" title="Remove" onclick="removeCheckin(${i})">×</button></td></tr>`).join('') +
+    '</table></div>';
+
+  $('first6').disabled = $('shuffle6').disabled = checkins.length < 6;
+  $('pick-hint').textContent = selected.length
+    ? 'Selected: ' + selected.join(', ')
+    : checkins.length < 6 ? 'Need at least 6 checked in.' : 'Pick 6 to continue.';
+
+  $('generate').disabled = selected.length !== 6;
+  $('csv').disabled = !checkins.length;
+
+  if (!result) { $('output').innerHTML = ''; return; }
+  const { people } = result;
+  const dot = c => `<span class="dot" style="background:${c.hex}"></span>${c.name}`;
+  $('output').innerHTML =
+    '<h3>Master Table</h3><p class="hint">Cell format: room letter - seat (L = left, R = right)</p>' +
+    '<div class="table-wrap"><table><tr><th>Participant</th><th>Color</th>' +
+    [1, 2, 3, 4, 5].map(r => `<th>Round ${r}</th>`).join('') + '</tr>' +
+    people.map((p, i) => `<tr><td>${esc(p.name)}</td><td>${dot(p.color)}</td>` +
+      cellsFor(i).map(c => `<td>${c}</td>`).join('') + '</tr>').join('') +
+    '</table></div><h3>Partner Cards (Per Color)</h3><div class="cards">' +
+    people.map((p, i) => `<div class="card" style="background:${p.color.hex}"><h4>${p.color.name}</h4>` +
+      `<div class="who">Participant ${esc(p.name)}</div><ol>` +
+      partnersFor(i).map(x => `<li>${people[x.partner].color.name} (Room ${x.room}, ${x.seat} seat)</li>`).join('') +
+      '</ol></div>').join('') + '</div>';
+}
+
+function removeCheckin(i) {
+  const [gone] = checkins.splice(i, 1);
+  if (selected.includes(gone.name)) { selected = []; result = null; }
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
